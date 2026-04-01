@@ -55,6 +55,13 @@ export const settingsSchema: SettingSchemaDesc[] = [
         description: "The shortcut to open the chat dialog",
     },
     {
+        key: "OAUTH_REDIRECT_URL",
+        type: "string",
+        default: "",
+        title: "OAuth Redirect URL (Paste here)",
+        description: "Paste the full redirect URL (http://localhost:1455/auth/callback?code=...) here, then run 'Copilot: Codex Complete Login'.",
+    },
+    {
         key: "OAUTH_ACCESS_TOKEN",
         type: "string",
         default: "",
@@ -132,7 +139,7 @@ export async function logseqSetup() {
             logseq.updateSettings({ OAUTH_PKCE_VERIFIER: verifier });
             const url = getAuthorizeUrl(challenge, state);
             logseq.App.openExternalLink(url);
-            logseq.UI.showMsg("Opened browser for OpenAI login. After login, use 'Copilot: Codex Complete Login' to paste the redirect URL.", "info");
+            logseq.UI.showMsg("Opened browser for OpenAI login. After login, paste the redirect URL into plugin settings, then run 'Copilot: Codex Complete Login'.", "info");
         }
     );
 
@@ -142,13 +149,16 @@ export async function logseqSetup() {
             label: "Copilot: Codex Complete Login",
         },
         async () => {
-            const input = await logseq.Editor.askUser("Paste the full redirect URL (starts with http://localhost:1455/auth/callback?code=...):");
-            if (!input) return;
+            const input = logseq.settings!["OAUTH_REDIRECT_URL"] as string;
+            if (!input) {
+                logseq.UI.showMsg("Please paste the redirect URL into the plugin settings first.", "error");
+                return;
+            }
 
             try {
-                const url = new URL(input);
+                const url = new URL(input.trim());
                 const code = url.searchParams.get("code");
-                if (!code) throw new Error("No code found in URL");
+                if (!code) throw new Error("No code found in URL. Make sure you copied the full address.");
 
                 const verifier = logseq.settings!["OAUTH_PKCE_VERIFIER"] as string;
                 if (!verifier) throw new Error("No PKCE verifier found. Please run 'Codex Login' again.");
@@ -161,6 +171,7 @@ export async function logseqSetup() {
                     OAUTH_REFRESH_TOKEN: tokens.refresh_token,
                     OAUTH_EXPIRES_AT: Date.now() + tokens.expires_in * 1000,
                     OAUTH_PKCE_VERIFIER: "", // Clear verifier
+                    OAUTH_REDIRECT_URL: "", // Clear the input field
                 });
 
                 logseq.UI.showMsg("Codex Login successful!", "success");

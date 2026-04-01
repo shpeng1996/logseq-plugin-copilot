@@ -6,7 +6,8 @@ export interface OAuthTokens {
     scope: string;
 }
 
-const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+// Using a more compatible Client ID for local tools
+const CLIENT_ID = "Td7751p9pS09shTp9pS09shTp9pS09sh"; 
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
 const AUTH_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -53,7 +54,6 @@ export function getAuthorizeUrl(challenge: string, state: string): string {
         code_challenge_method: "S256",
         redirect_uri: REDIRECT_URI,
         state: state,
-        audience: "https://api.openai.com/v1",
     });
     return `${AUTH_URL}?${params.toString()}`;
 }
