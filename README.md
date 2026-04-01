@@ -15,20 +15,30 @@ note suggestions into Logseq.
 
 ## Usage
 
-Be sure to add your OpenAI API key to the [settings](#settings) page. Without it, this plugin is not
-going to work.
+Be sure to add your OpenAI API key or use Codex OAuth in the [settings](#settings) page.
 
 Use `ctrl-P` to bring up the Copilot interface and type in a question about your notes.
+
+### Codex OAuth (OpenAI Subscription)
+
+If you have a ChatGPT Plus/Pro subscription, you can use the Codex OAuth flow:
+1. Go to plugin settings and set **Authentication Choice** to `openai-codex`.
+2. Open the Logseq command palette (`ctrl-shift-P` or `cmd-shift-P`).
+3. Run the command `Copilot: Codex Login (OpenAI Subscription)`.
+4. Your browser will open. Sign in to OpenAI if prompted.
+5. You will be redirected to a page that fails to load (e.g., `http://127.0.0.1:1455/...`). **Copy the full URL from the address bar.**
+6. Go back to Logseq, open the command palette again, and run `Copilot: Codex Complete Login`.
+7. Paste the URL you copied and hit Enter.
 
 ## Settings
 
 ![settings](./settings.png)
 
-- **OpenAI API Key**: If you don't have one already, create it
-  [here](https://platform.openai.com/settings/organization/api-keys)
-- **OpenAI Base URL**: If you have a proxy you'd like your OpenAI API calls to go through. If you
-  don't know what that is, then you can leave this blank.
-- **OpenAI Model**: The actual model the plugin will contact.
+- **Authentication Choice**: Choose between OpenAI API key or Codex OAuth (subscription access).
+- **OpenAI API Key**: Your OpenAI API key (Platform API).
+- **OpenAI Base URL**: If you have a proxy you'd like your OpenAI API calls to go through. For Codex OAuth, use `https://api.openai.com/v1`.
+- **OpenAI Model**: The actual model the plugin will contact. For Codex subscription, use `openai-codex/gpt-5.4`.
+- **Fast Mode**: Enables OpenAI priority processing (service_tier=priority).
 - **Chat Dialog Shortcut**: The keyboard shortcut to bring up the chat dialog screen.
 - **Vector Similarity Top K**: (Advanced) The number of vector search results that can be included
   in your prompt context.

@@ -9,9 +9,10 @@ import { RagEngine } from "./lib/rag";
 async function main() {
     await logseqSetup();
     const ragEngine = new RagEngine();
+    await ragEngine.setUpLLMChains();
 
-    logseq.onSettingsChanged(() => {
-        ragEngine.setUpLLMChains();
+    logseq.onSettingsChanged(async () => {
+        await ragEngine.setUpLLMChains();
     })
 
     const container = document.getElementById("app");

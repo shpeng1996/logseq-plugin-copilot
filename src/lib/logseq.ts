@@ -1,27 +1,51 @@
 import "@logseq/libs";
 import { SettingSchemaDesc } from "@logseq/libs/dist/LSPlugin";
+import { generatePkce, generateState, getAuthorizeUrl, exchangeCodeForToken, refreshAccessToken } from "./oauth";
 
 export const settingsSchema: SettingSchemaDesc[] = [
+    {
+        key: "OPENAI_AUTH_CHOICE",
+        type: "enum",
+        default: "openai-api-key",
+        title: "Authentication Choice",
+        description: "Choose between OpenAI API key or Codex OAuth (subscription access).",
+        enumChoices: ["openai-api-key", "openai-codex"],
+        enumPicker: "select"
+    },
     {
         key: "OPENAI_API_KEY",
         type: "string",
         default: "",
         title: "OpenAI API Key",
-        description: "Your OpenAI API key",
+        description: "Your OpenAI API key (Platform API).",
     },
     {
         key: "OPENAI_BASE_URL",
         type: "string",
         default: "https://api.openai.com/v1",
         title: "OpenAI Base URL",
-        description: "The base URL for the OpenAI API. Most users shouldn't need to change this.",
+        description: "The base URL for the OpenAI API. For Codex OAuth, use your proxy URL (e.g., from OpenClaw) or 'https://api.openai.com/v1'. Direct Codex usage often requires 'https://chatgpt.com/backend-api' via a gateway.",
     },
     {
         key: "OPENAI_MODEL",
         type: "string",
         default: "gpt-4o-mini",
         title: "OpenAI Model",
-        description: "The OpenAI model to use",
+        description: "The OpenAI model to use. For Codex subscription, 'gpt-4o' or 'gpt-5.4' are recommended. The 'openai-codex/' prefix is added automatically if Authentication Choice is 'openai-codex'.",
+    },
+    {
+        key: "OPENAI_FAST_MODE",
+        type: "boolean",
+        default: false,
+        title: "Fast Mode",
+        description: "Enables priority processing (service_tier=priority) for both OpenAI and Codex sessions.",
+    },
+    {
+        key: "OPENAI_STORE_REQUESTS",
+        type: "boolean",
+        default: true,
+        title: "Store Requests",
+        description: "Whether to store request/response data in OpenAI's system (required for some Codex features and dashboard visibility).",
     },
     {
         key: "CHAT_DIALOG_SHORTCUT",
@@ -29,6 +53,34 @@ export const settingsSchema: SettingSchemaDesc[] = [
         default: "mod+p",
         title: "Chat Dialog Shortcut",
         description: "The shortcut to open the chat dialog",
+    },
+    {
+        key: "OAUTH_ACCESS_TOKEN",
+        type: "string",
+        default: "",
+        title: "OAuth Access Token (Auto-filled)",
+        description: "Stored OAuth access token for Codex.",
+    },
+    {
+        key: "OAUTH_REFRESH_TOKEN",
+        type: "string",
+        default: "",
+        title: "OAuth Refresh Token (Auto-filled)",
+        description: "Stored OAuth refresh token for Codex.",
+    },
+    {
+        key: "OAUTH_EXPIRES_AT",
+        type: "number",
+        default: 0,
+        title: "OAuth Expires At (Auto-filled)",
+        description: "OAuth token expiration timestamp.",
+    },
+    {
+        key: "OAUTH_PKCE_VERIFIER",
+        type: "string",
+        default: "",
+        title: "OAuth PKCE Verifier (Internal)",
+        description: "Stored verifier for the ongoing OAuth flow.",
     }
 ]
 
@@ -42,14 +94,26 @@ export async function logseqSetup() {
             keybinding: { binding: logseq.settings!["CHAT_DIALOG_SHORTCUT"] as string }
         },
         async () => {
+            const authChoice = logseq.settings!["OPENAI_AUTH_CHOICE"] as string;
             const apiKey = logseq.settings!["OPENAI_API_KEY"] as string;
-            if (!apiKey) {
+            const accessToken = logseq.settings!["OAUTH_ACCESS_TOKEN"] as string;
+
+            if (authChoice === "openai-api-key" && !apiKey) {
                 logseq.UI.showMsg(
                     "Please set your OpenAI API key in the Logseq Copilot plugin settings.",
                     "error"
                 );
                 return;
             }
+
+            if (authChoice === "openai-codex" && !accessToken) {
+                logseq.UI.showMsg(
+                    "Please login via 'Copilot: Codex Login' command first.",
+                    "error"
+                );
+                return;
+            }
+
             logseq.showMainUI({ autoFocus: true });
             setTimeout(() => {
                 document.getElementById("logseq-copilot-search")?.focus();
@@ -57,7 +121,87 @@ export async function logseqSetup() {
         }
     );
 
+    logseq.App.registerCommandPalette(
+        {
+            key: "Codex Login",
+            label: "Copilot: Codex Login (OpenAI Subscription)",
+        },
+        async () => {
+            const { verifier, challenge } = await generatePkce();
+            const state = generateState();
+            logseq.updateSettings({ OAUTH_PKCE_VERIFIER: verifier });
+            const url = getAuthorizeUrl(challenge, state);
+            logseq.App.openExternalLink(url);
+            logseq.UI.showMsg("Opened browser for OpenAI login. After login, use 'Copilot: Codex Complete Login' to paste the redirect URL.", "info");
+        }
+    );
+
+    logseq.App.registerCommandPalette(
+        {
+            key: "Codex Complete Login",
+            label: "Copilot: Codex Complete Login",
+        },
+        async () => {
+            const input = await logseq.Editor.askUser("Paste the full redirect URL (starts with http://localhost:1455/auth/callback?code=...):");
+            if (!input) return;
+
+            try {
+                const url = new URL(input);
+                const code = url.searchParams.get("code");
+                if (!code) throw new Error("No code found in URL");
+
+                const verifier = logseq.settings!["OAUTH_PKCE_VERIFIER"] as string;
+                if (!verifier) throw new Error("No PKCE verifier found. Please run 'Codex Login' again.");
+
+                logseq.UI.showMsg("Exchanging code for token...", "info");
+                const tokens = await exchangeCodeForToken(code, verifier);
+
+                logseq.updateSettings({
+                    OAUTH_ACCESS_TOKEN: tokens.access_token,
+                    OAUTH_REFRESH_TOKEN: tokens.refresh_token,
+                    OAUTH_EXPIRES_AT: Date.now() + tokens.expires_in * 1000,
+                    OAUTH_PKCE_VERIFIER: "", // Clear verifier
+                });
+
+                logseq.UI.showMsg("Codex Login successful!", "success");
+            } catch (e) {
+                logseq.UI.showMsg(`Login failed: ${e instanceof Error ? e.message : String(e)}`, "error");
+            }
+        }
+    );
+
     logseq.setMainUIInlineStyle({ zIndex: 100 });
+}
+
+export async function ensureValidToken(): Promise<string | null> {
+    const authChoice = logseq.settings!["OPENAI_AUTH_CHOICE"] as string;
+    if (authChoice !== "openai-codex") return null;
+
+    const accessToken = logseq.settings!["OAUTH_ACCESS_TOKEN"] as string;
+    const refreshToken = logseq.settings!["OAUTH_REFRESH_TOKEN"] as string;
+    const expiresAt = logseq.settings!["OAUTH_EXPIRES_AT"] as number;
+
+    if (!accessToken) return null;
+
+    // Refresh if expiring in less than 5 minutes
+    if (Date.now() + 5 * 60 * 1000 > expiresAt) {
+        if (!refreshToken) return accessToken; // Can't refresh
+
+        try {
+            const tokens = await refreshAccessToken(refreshToken);
+            logseq.updateSettings({
+                OAUTH_ACCESS_TOKEN: tokens.access_token,
+                OAUTH_REFRESH_TOKEN: tokens.refresh_token,
+                OAUTH_EXPIRES_AT: Date.now() + tokens.expires_in * 1000,
+            });
+            return tokens.access_token;
+        } catch (e) {
+            console.error("Token refresh failed", e);
+            return accessToken; // Try with old token
+        }
+    }
+
+    return accessToken;
 }
 
 export class Theme {

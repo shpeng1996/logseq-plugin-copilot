@@ -50,7 +50,12 @@ export const App: React.FC<{ ragEngine: RagEngine }> = ({ ragEngine }) => {
         } catch (e) {
             const error = e as Error;
             if (error instanceof AuthenticationError) {
-                logseq.UI.showMsg("Copilot: Authentication failed. Please check your OpenAI API key in settings", "error");
+                const authChoice = logseq.settings!["OPENAI_AUTH_CHOICE"];
+                if (authChoice === "openai-codex") {
+                    logseq.UI.showMsg("Copilot: Codex authentication failed. Please login again using the 'Copilot: Codex Login' command.", "error");
+                } else {
+                    logseq.UI.showMsg("Copilot: Authentication failed. Please check your OpenAI API key in settings", "error");
+                }
             } else {
                 logseq.UI.showMsg(`Copilot: Error running query\n${error.message}`, "error");
             }

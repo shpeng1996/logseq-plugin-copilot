@@ -10,6 +10,7 @@ import logger from "./logger";
 import { BlockEntity, BlockUUIDTuple, PageEntity } from "@logseq/libs/dist/LSPlugin.user";
 import { HumanMessage, AIMessage, Message } from "./chat";
 import { HumanMessage as LangChainHumanMessage, AIMessage as LangChainAIMessage } from "@langchain/core/messages";
+import { ensureValidToken } from "./logseq";
 
 const VECTOR_SIMILARITY_TOP_K = 20;
 
@@ -19,20 +20,37 @@ export class RagEngine {
     vectorStore: VectorStore;
 
     constructor() {
-        this.setUpLLMChains();
         this.vectorStore = new VectorStore();
         setTimeout(this.vectorStore.indexAllPages.bind(this.vectorStore), 3000);
     }
 
-    setUpLLMChains() {
+    async setUpLLMChains() {
+        const authChoice = logseq.settings!["OPENAI_AUTH_CHOICE"] as string;
+        let apiKey = logseq.settings!["OPENAI_API_KEY"] as string;
+        let modelName = logseq.settings!["OPENAI_MODEL"] as string;
+
+        if (authChoice === "openai-codex") {
+            const token = await ensureValidToken();
+            if (token) {
+                apiKey = token;
+            }
+            if (!modelName.startsWith("openai-codex/")) {
+                modelName = "openai-codex/" + modelName;
+            }
+        }
+
         const model = new ChatOpenAI({
             configuration: {
                 baseURL: logseq.settings!["OPENAI_BASE_URL"] as string,
-                apiKey: logseq.settings!["OPENAI_API_KEY"] as string,
+                apiKey: apiKey,
             },
-            modelName: logseq.settings!["OPENAI_MODEL"] as string,
+            modelName: modelName,
             maxTokens: 1000,
             verbose: __DEV__,
+            modelKwargs: {
+                ...(logseq.settings!["OPENAI_FAST_MODE"] ? { service_tier: "priority" } : {}),
+                store: logseq.settings!["OPENAI_STORE_REQUESTS"] ?? true,
+            },
         });
         const queryEnhancerTemplate = ChatPromptTemplate.fromMessages([
             ["system", dedent`
@@ -153,6 +171,7 @@ export class RagEngine {
     }
 
     async run(chatMessages: Message[], onChunkReceived: (token: string) => void) {
+        await this.setUpLLMChains();
         const queries = chatMessages.filter(message => message instanceof HumanMessage).map(message => message.msg);
 
         let blockUUIDs = new Set<string>();
