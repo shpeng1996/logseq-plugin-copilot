@@ -11,16 +11,42 @@ import { BlockEntity, BlockUUIDTuple, PageEntity } from "@logseq/libs/dist/LSPlu
 import { HumanMessage, AIMessage, Message } from "./chat";
 import { HumanMessage as LangChainHumanMessage, AIMessage as LangChainAIMessage } from "@langchain/core/messages";
 import { ensureValidToken } from "./logseq";
+import { getCodexAccessToken } from "./codexAuth";
+import { createCodexTextResponse, streamCodexTextResponse } from "./codexResponses";
 
 const VECTOR_SIMILARITY_TOP_K = 20;
+
+const QUERY_ENHANCER_SYSTEM_PROMPT = dedent`
+    You are an expert in creating queries for Logseq. Your job is to convert a question
+    from a user to a Logseq query that outputs relevant blocks that can be used to
+    answer the user's question.
+
+    Some examples:
+    - given the question "What do I know about Deepspeed", you might
+    conclude that the most important keyword here is "Deepspeed" and create the
+    query \`"Deepspeed"\`.
+    - given the question "Why did I choose to
+    use VertexAI for project XYZ?", you might conclude that the blocks containing
+    both VertexAI and XYZ would be most relevant and create the query
+    \`(and "VertexAI" "XYZ")\`.
+
+    Be as succinct as possible. Just output the query and nothing else. Don't surround
+    the query produced with backticks.
+`;
 
 export class RagEngine {
     qaChain!: Runnable;
     queryEnhancerChain!: Runnable;
     vectorStore: VectorStore;
+    authChoice: string;
+    baseURL: string;
+    modelName: string;
 
     constructor() {
         this.vectorStore = new VectorStore();
+        this.authChoice = "openai-api-key";
+        this.baseURL = "https://api.openai.com/v1";
+        this.modelName = "gpt-4o-mini";
         setTimeout(this.vectorStore.indexAllPages.bind(this.vectorStore), 3000);
     }
 
@@ -28,6 +54,9 @@ export class RagEngine {
         const authChoice = logseq.settings!["OPENAI_AUTH_CHOICE"] as string;
         let apiKey = logseq.settings!["OPENAI_API_KEY"] as string;
         let modelName = logseq.settings!["OPENAI_MODEL"] as string;
+        this.authChoice = authChoice;
+        this.baseURL = logseq.settings!["OPENAI_BASE_URL"] as string;
+        this.modelName = modelName;
 
         if (authChoice === "openai-codex") {
             const token = await ensureValidToken();
@@ -39,9 +68,15 @@ export class RagEngine {
             }
         }
 
+        this.modelName = modelName;
+
+        if (authChoice === "codex-cli-auth") {
+            return;
+        }
+
         const model = new ChatOpenAI({
             configuration: {
-                baseURL: logseq.settings!["OPENAI_BASE_URL"] as string,
+                baseURL: this.baseURL,
                 apiKey: apiKey,
             },
             modelName: modelName,
@@ -53,22 +88,7 @@ export class RagEngine {
             },
         });
         const queryEnhancerTemplate = ChatPromptTemplate.fromMessages([
-            ["system", dedent`
-                You are an expert in creating queries for Logseq. Your job is to convert a question
-                from a user to a Logseq query that outputs relevant blocks that can be used to
-                answer the user's question.
-
-                Some examples:
-                - given the question "What do I know about Deepspeed", you might
-                conclude that the most important keyword here is "Deepspeed" and create the
-                query \`"Deepspeed"\`.
-                - given the question "Why did I choose to
-                use VertexAI for project XYZ?", you might conclude that the blocks containing
-                both VertexAI and XYZ would be most relevant and create the query
-                \`(and "VertexAI" "XYZ")\`.
-
-                Be as succinct as possible. Just output the query and nothing else. Don't surround
-                the query produced with backticks`],
+            ["system", QUERY_ENHANCER_SYSTEM_PROMPT],
             ["human", "{query}"],
         ]);
         const qaTemplate = ChatPromptTemplate.fromMessages([
@@ -109,22 +129,78 @@ export class RagEngine {
         this.qaChain = qaTemplate.pipe(model).pipe(outputParser);
     }
 
+    private getCodexAuthPath(): string {
+        return logseq.settings!["CODEX_AUTH_JSON_PATH"] as string;
+    }
+
+    private async runCodexQueryEnhancer(query: string): Promise<string> {
+        const accessToken = await getCodexAccessToken(this.getCodexAuthPath());
+        return await createCodexTextResponse(
+            this.baseURL,
+            accessToken,
+            this.modelName,
+            QUERY_ENHANCER_SYSTEM_PROMPT,
+            [],
+            query,
+        );
+    }
+
+    private async runCodexQa(
+        chatMessages: Message[],
+        retrievedContext: string,
+        onChunkReceived: (token: string) => void,
+    ): Promise<void> {
+        const accessToken = await getCodexAccessToken(this.getCodexAuthPath());
+        const queries = chatMessages.filter(message => message instanceof HumanMessage).map(message => message.msg);
+        const history = chatMessages.slice(0, -1);
+        const systemPrompt = dedent`
+            You are a helpful assistant that can answer questions about the user's notes and
+            help the user create new notes.
+
+            The user's notes are:
+            ${retrievedContext}
+
+            You may use markdown to format your response.
+
+            When you provide a suggested note that the user can include into their notes, you
+            should include it in a \`<note>\` tag. This is important because the contents
+            included in the \`<note>\` tag can be copied into the user's notes with a single
+            click.
+
+            Aggressively find opportunities to help improve the user's notes by liberally using
+            the \`<note>\` tag. Assume the user will want to copy important parts of your
+            response into their notes.
+
+            It is now: ${new Date().toLocaleString()}.
+        `;
+
+        await streamCodexTextResponse(
+            this.baseURL,
+            accessToken,
+            this.modelName,
+            systemPrompt,
+            history,
+            queries[queries.length - 1],
+            onChunkReceived,
+        );
+    }
+
     async retrieveLogseqBlocks(query: string): Promise<string[]> {
         // Note that the query enhancer may return a query wrapped in backticks.
-        const logseqQuery = (await this.queryEnhancerChain.invoke({ query })).replace(/^`|`$/g, '');
+        const enhancedQuery = this.authChoice === "codex-cli-auth"
+            ? await this.runCodexQueryEnhancer(query)
+            : await this.queryEnhancerChain.invoke({ query });
+        const logseqQuery = enhancedQuery.replace(/^`|`$/g, "");
         let results: any[] | null = null;
         try {
             results = await logseq.DB.q(logseqQuery);
         } catch (e) {
             logger.error("Error querying Logseq with enhanced query. Falling back.", e);
-            const simpleQueryParts = query.replace(/[^a-zA-Z0-9\-]/g, '').split(" ");
+            const simpleQueryParts = query.replace(/[^a-zA-Z0-9\-]/g, "").split(" ");
             const simpleQuery = `(and ${simpleQueryParts.map(word => `"${word}"`).join(" ")})`;
             results = await logseq.DB.q(simpleQuery);
         }
         logger.log("Logseq results:", results);
-        // For some reason, the results from logseq.DB.q are not the same as the results from
-        // logseq.Editor.getBlock. For one, the results from logseq.DB.q don't have a list of child
-        // blocks. Let's just return block IDs here and process the unified set of blocks later.
         return (results || []).slice(0, 10).map(result => result.uuid);
     }
 
@@ -206,6 +282,12 @@ export class RagEngine {
             </userNotes>
         `;
         logger.log(retrievedContext);
+
+        if (this.authChoice === "codex-cli-auth") {
+            await this.runCodexQa(chatMessages, retrievedContext, onChunkReceived);
+            return;
+        }
+
         const stream = await this.qaChain.stream({
             query: queries[queries.length - 1],
             retrievedContext,

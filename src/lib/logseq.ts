@@ -1,6 +1,7 @@
 import "@logseq/libs";
 import { SettingSchemaDesc } from "@logseq/libs/dist/LSPlugin";
 import { generatePkce, generateState, getAuthorizeUrl, exchangeCodeForToken, refreshAccessToken } from "./oauth";
+import { getDefaultCodexAuthPath } from "./codexAuth";
 
 export const settingsSchema: SettingSchemaDesc[] = [
     {
@@ -8,8 +9,8 @@ export const settingsSchema: SettingSchemaDesc[] = [
         type: "enum",
         default: "openai-api-key",
         title: "Authentication Choice",
-        description: "Choose between OpenAI API key or Codex OAuth (subscription access).",
-        enumChoices: ["openai-api-key", "openai-codex"],
+        description: "Choose between OpenAI API key, manual Codex OAuth, or a local Codex CLI session.",
+        enumChoices: ["openai-api-key", "openai-codex", "codex-cli-auth"],
         enumPicker: "select"
     },
     {
@@ -31,7 +32,14 @@ export const settingsSchema: SettingSchemaDesc[] = [
         type: "string",
         default: "gpt-4o-mini",
         title: "OpenAI Model",
-        description: "The OpenAI model to use. For Codex subscription, 'gpt-4o' or 'gpt-5.4' are recommended. The 'openai-codex/' prefix is added automatically if Authentication Choice is 'openai-codex'.",
+        description: "The OpenAI model to use. For Codex auth modes, prefer a Responses API model like 'gpt-5-codex' or 'gpt-5.4'.",
+    },
+    {
+        key: "CODEX_AUTH_JSON_PATH",
+        type: "string",
+        default: getDefaultCodexAuthPath(),
+        title: "Codex Auth JSON Path",
+        description: "Path to the Codex CLI auth file. Used only when Authentication Choice is 'codex-cli-auth'.",
     },
     {
         key: "OPENAI_FAST_MODE",
@@ -119,6 +127,17 @@ export async function logseqSetup() {
                     "error"
                 );
                 return;
+            }
+
+            if (authChoice === "codex-cli-auth") {
+                const authPath = logseq.settings!["CODEX_AUTH_JSON_PATH"] as string;
+                if (!authPath) {
+                    logseq.UI.showMsg(
+                        "Please set the Codex auth.json path in plugin settings.",
+                        "error"
+                    );
+                    return;
+                }
             }
 
             logseq.showMainUI({ autoFocus: true });

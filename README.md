@@ -30,14 +30,27 @@ If you have a ChatGPT Plus/Pro subscription, you can use the Codex OAuth flow:
 6. Go back to Logseq, open the command palette again, and run `Copilot: Codex Complete Login`.
 7. Paste the URL you copied and hit Enter.
 
+### Codex CLI Auth File
+
+If you already use `codex login`, you can point the plugin at your local Codex auth file:
+1. Run `codex login` in your terminal first.
+2. In plugin settings, set **Authentication Choice** to `codex-cli-auth`.
+3. Set **Codex Auth JSON Path** to your local auth file path. The default is `~/.codex/auth.json`.
+4. Set **OpenAI Base URL** to `https://api.openai.com/v1`.
+5. Set **OpenAI Model** to a Responses API model such as `gpt-5-codex` or `gpt-5.4`.
+
+This path is experimental. It reads the Codex CLI session token locally and calls the Responses API
+directly instead of using the plugin's older OAuth exchange flow.
+
 ## Settings
 
 ![settings](./settings.png)
 
-- **Authentication Choice**: Choose between OpenAI API key or Codex OAuth (subscription access).
+- **Authentication Choice**: Choose between OpenAI API key, manual Codex OAuth, or a local Codex CLI session.
 - **OpenAI API Key**: Your OpenAI API key (Platform API).
 - **OpenAI Base URL**: If you have a proxy you'd like your OpenAI API calls to go through. For Codex OAuth, use `https://api.openai.com/v1`.
-- **OpenAI Model**: The actual model the plugin will contact. For Codex subscription, use `openai-codex/gpt-5.4`.
+- **OpenAI Model**: The actual model the plugin will contact. For Codex auth modes, prefer `gpt-5-codex` or `gpt-5.4`.
+- **Codex Auth JSON Path**: Path to the local Codex CLI auth file, usually `~/.codex/auth.json`.
 - **Fast Mode**: Enables OpenAI priority processing (service_tier=priority).
 - **Chat Dialog Shortcut**: The keyboard shortcut to bring up the chat dialog screen.
 - **Vector Similarity Top K**: (Advanced) The number of vector search results that can be included
