@@ -23,12 +23,17 @@ export class HumanMessage extends Message {
 export class AIMessage extends Message {
     constructor(
         id: string,
-        msg: string
+        msg: string,
+        public thinking: string = "",
     ) {
         super(id, msg);
     }
 
     withChunk(chunk: string): AIMessage {
-        return new AIMessage(this.id, this.msg + chunk);
+        return new AIMessage(this.id, this.msg + chunk, this.thinking);
+    }
+
+    withThinkingChunk(chunk: string): AIMessage {
+        return new AIMessage(this.id, this.msg, this.thinking + chunk);
     }
 }

@@ -35,16 +35,24 @@ export const App: React.FC<{ ragEngine: RagEngine }> = ({ ragEngine }) => {
         setChatMessages(newChatMessages);
         setIsProcessing(true);
         try {
-            await ragEngine.run(newChatMessages, (chunk) => {
+            await ragEngine.run(newChatMessages, ({ content, reasoning }) => {
                 setChatMessages(prevResults => {
                     const lastMessage = prevResults[prevResults.length - 1];
                     if (lastMessage instanceof AIMessage) {
+                        let updatedMessage = lastMessage;
+                        if (content) {
+                            updatedMessage = updatedMessage.withChunk(content);
+                        }
+                        if (reasoning) {
+                            updatedMessage = updatedMessage.withThinkingChunk(reasoning);
+                        }
                         return [
                             ...prevResults.slice(0, -1),
-                            lastMessage.withChunk(chunk),
+                            updatedMessage,
                         ];
                     }
-                    return [...prevResults, new AIMessage(crypto.randomUUID(), chunk)];
+                    const newMessage = new AIMessage(crypto.randomUUID(), content, reasoning);
+                    return [...prevResults, newMessage];
                 });
             });
         } catch (e) {

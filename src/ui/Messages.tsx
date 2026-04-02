@@ -3,8 +3,8 @@ import { AIMessage, HumanMessage, Message } from '../lib/chat';
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { Theme, replaceCurrentBlock, insertChildBlock } from '../lib/logseq';
-import { Button } from '@headlessui/react';
-import { Square2StackIcon, BarsArrowDownIcon, CheckIcon } from '@heroicons/react/24/outline';
+import { Button, Disclosure, DisclosureButton, DisclosurePanel } from '@headlessui/react';
+import { Square2StackIcon, BarsArrowDownIcon, CheckIcon, ChevronDownIcon } from '@heroicons/react/24/outline';
 import "@logseq/libs";
 
 const parseIncompleteMarkdown = (markdown: string) => {
@@ -43,6 +43,25 @@ export const HumanMessageBox: React.FC<{ message: HumanMessage, theme: Theme }> 
 export const AICommentary: React.FC<{ message: string }> = ({ message }) => {
     return (
         <div className="markdown-body mb-2" dangerouslySetInnerHTML={{ __html: parseIncompleteMarkdown(message) }} />
+    );
+}
+
+export const AIThinkingBox: React.FC<{ thinking: string, theme: Theme }> = ({ thinking, theme }) => {
+    if (!thinking) return null;
+    return (
+        <Disclosure as="div" className="mb-4">
+            {({ open }) => (
+                <>
+                    <DisclosureButton className="flex items-center gap-2 text-sm opacity-60 hover:opacity-100 transition-opacity">
+                        <ChevronDownIcon className={`size-4 transition-transform ${open ? 'rotate-180' : ''}`} />
+                        <span>Thinking...</span>
+                    </DisclosureButton>
+                    <DisclosurePanel className="mt-2 ml-4 p-2 border-l-2 text-sm opacity-80 italic whitespace-pre-wrap" style={{ borderColor: theme.props.borderColor }}>
+                        {thinking}
+                    </DisclosurePanel>
+                </>
+            )}
+        </Disclosure>
     );
 }
 
@@ -95,13 +114,31 @@ export const AISuggestion: React.FC<{ message: string, theme: Theme }> = ({ mess
 }
 
 export const AIMessageBox: React.FC<{ message: AIMessage, theme: Theme }> = ({ message, theme }) => {
+    let msg = message.msg;
+    let thinking = message.thinking;
+
+    // Handle <think> tags in the message body
+    const thinkRegex = /<think>(.*?)<\/think>/gs;
+    const msgThinks: string[] = [];
+    msg = msg.replace(thinkRegex, (_, p1) => {
+        msgThinks.push(p1.trim());
+        return "";
+    });
+
+    // Handle unclosed <think> tag (streaming)
+    if (msg.includes("<think>")) {
+        const parts = msg.split("<think>");
+        msg = parts[0];
+        msgThinks.push(parts[1].trim());
+    }
+
     const notesRegex = /<note>(.*?)<\/note>/gs;
     const sections: { type: "commentary" | "suggestion", message: string }[] = [];
     let lastIndex = 0;
-    for (const match of message.msg.matchAll(notesRegex)) {
+    for (const match of msg.matchAll(notesRegex)) {
         // Add text before the note if it exists
         if (match.index! > lastIndex) {
-            const textBefore = message.msg.slice(lastIndex, match.index).trim();
+            const textBefore = msg.slice(lastIndex, match.index).trim();
             if (textBefore) {
                 sections.push({ type: "commentary", message: textBefore });
             }
@@ -113,7 +150,7 @@ export const AIMessageBox: React.FC<{ message: AIMessage, theme: Theme }> = ({ m
         lastIndex = match.index! + match[0].length;
     }
     // Add remaining text after last note if it exists
-    const remainingText = message.msg.slice(lastIndex).trim();
+    const remainingText = msg.slice(lastIndex).trim();
     if (remainingText) {
         sections.push({ type: "commentary", message: remainingText });
     }
@@ -135,9 +172,15 @@ export const AIMessageBox: React.FC<{ message: AIMessage, theme: Theme }> = ({ m
         }
     }
 
-    return <>{sections.map((section, index) => section.type === "commentary"
-        ? <AICommentary message={section.message} key={index} />
-        : <AISuggestion message={section.message} theme={theme} key={index} />)}</>;
+    return (
+        <>
+            {thinking && <AIThinkingBox thinking={thinking} theme={theme} />}
+            {msgThinks.map((t, i) => <AIThinkingBox key={i} thinking={t} theme={theme} />)}
+            {sections.map((section, index) => section.type === "commentary"
+                ? <AICommentary message={section.message} key={index} />
+                : <AISuggestion message={section.message} theme={theme} key={index} />)}
+        </>
+    );
 }
 
 export const Messages: React.FC<{
@@ -179,8 +222,9 @@ export const Messages: React.FC<{
                 {messages.map((message) => (
                     message instanceof HumanMessage
                         ? <HumanMessageBox message={message} theme={theme} key={message.id} />
-                        : <AIMessageBox message={message} theme={theme} key={message.id} />
-
+                        : message instanceof AIMessage
+                            ? <AIMessageBox message={message} theme={theme} key={message.id} />
+                            : null
                 ))}
             </div>
         </>

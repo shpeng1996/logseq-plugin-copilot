@@ -88,7 +88,7 @@ export class RagEngine {
         ]);
         const outputParser = new StringOutputParser();
         this.queryEnhancerChain = queryEnhancerTemplate.pipe(model).pipe(outputParser);
-        this.qaChain = qaTemplate.pipe(model).pipe(outputParser);
+        this.qaChain = qaTemplate.pipe(model);
     }
 
     async retrieveLogseqBlocks(query: string): Promise<string[]> {
@@ -152,7 +152,7 @@ export class RagEngine {
         `;
     }
 
-    async run(chatMessages: Message[], onChunkReceived: (token: string) => void) {
+    async run(chatMessages: Message[], onChunkReceived: (chunk: { content: string, reasoning: string }) => void) {
         const queries = chatMessages.filter(message => message instanceof HumanMessage).map(message => message.msg);
 
         let blockUUIDs = new Set<string>();
@@ -202,7 +202,12 @@ export class RagEngine {
             })
         });
         for await (const chunk of stream) {
-            onChunkReceived(chunk as string);
+            const castChunk = chunk as any;
+            const content = castChunk.content || "";
+            const reasoning = castChunk.additional_kwargs?.reasoning_content || "";
+            if (content || reasoning) {
+                onChunkReceived({ content, reasoning });
+            }
         }
     }
 }
